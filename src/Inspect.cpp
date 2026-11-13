@@ -939,14 +939,16 @@ namespace Inspect
 
 		// the player can hold something in front of the face right now. Not in combat or with a weapon (or spell) out
 		// (or in 3rd person with "Only in 1st person"): then items are taken the normal way.
-		bool PlayerFree(RE::PlayerCharacter* a_player)
+		bool PlayerFree(RE::PlayerCharacter* a_player, bool a_allowWeaponDrawn = false, bool a_ignoreFirstPersonOnly = false)
 		{
 			const auto actorState = a_player->AsActorState();
-			if (const auto camera = RE::PlayerCamera::GetSingleton(); Settings::Get().firstPersonOnly && (!camera || !camera->IsInFirstPerson())) {
-				return false;  // "Only in 1st person": 3rd person takes items the normal way
+			if (const auto camera = RE::PlayerCamera::GetSingleton(); !a_ignoreFirstPersonOnly && Settings::Get().firstPersonOnly && (!camera || !camera->IsInFirstPerson())) {
+				return false;  // "Only in 1st person": ordinary pickups in 3rd person go the normal way
 			}
+			// Scripted catches may be awarded while the fishing rod is still drawn. TakeControl handles the camera,
+			// and HideWeapon temporarily hides the equipped weapon while the item is inspected.
 			return !a_player->IsDead() && !a_player->IsOnMount() && !a_player->IsInKillMove() && !actorState->IsSwimming() &&
-			       !a_player->IsInCombat() && !actorState->IsWeaponDrawn() &&
+			       !a_player->IsInCombat() && (a_allowWeaponDrawn || !actorState->IsWeaponDrawn()) &&
 			       actorState->GetSitSleepState() == RE::SIT_SLEEP_STATE::kNormal && actorState->GetKnockState() == RE::KNOCK_STATE_ENUM::kNormal &&
 			       a_player->Get3D(true);
 		}
@@ -1771,7 +1773,7 @@ namespace Inspect
 		bool BeginFromForm(RE::TESBoundObject* object, std::int32_t count)
 		{
 			const auto player = Player();
-			if (!player || !object || Active() || !PlayerFree(player)) {
+			if (!player || !object || Active() || !PlayerFree(player, true, true)) {
 				return false;
 			}
 			SetWeaponKind(object);
@@ -2559,11 +2561,11 @@ namespace Inspect
 					} else if (harvest) {
 						HarvestNow(state.ref, state.harvest);
 						Seen::Add(state.baseID);
-						} else if (form) {
-							if (const auto object = RE::TESForm::LookupByID<RE::TESBoundObject>(state.baseID)) {
-								player->AddObjectToContainer(object, nullptr, state.count, nullptr);
-								}
-							Seen::Add(state.baseID);
+					} else if (form) {
+						if (const auto object = RE::TESForm::LookupByID<RE::TESBoundObject>(state.baseID)) {
+							player->AddObjectToContainer(object, nullptr, state.count, nullptr);
+						}
+						Seen::Add(state.baseID);
 					}
 					// from the player's body, not the 1st person hand: the hand is on its way out of view and the camera
 					// goes back to 3rd person right after, and a sound following the hand jumped with it (broken sound)
