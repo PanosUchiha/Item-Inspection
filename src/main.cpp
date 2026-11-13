@@ -35,15 +35,35 @@ namespace
 			break;
 		}
 	}
+
+	// Papyrus wrapper
+	bool OfferItem(RE::StaticFunctionTag*, RE::TESForm* form, std::int32_t count)
+	{
+		const auto bound = form ? form->As<RE::TESBoundObject>() : nullptr;
+		if (!bound) {
+			logs::warn("ItemInspection.OfferItem: not a bound object");
+			return false;
+		}
+		return Inspect::OfferItem(bound, count);
+	}
+
+	bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm)
+	{
+		a_vm->RegisterFunction("OfferItem", "ItemInspection", OfferItem);
+		logs::info("Registered ItemInspection Papyrus functions");
+		return true;
+	}
 }
 
 SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
 {
-	SKSE::Init(a_skse, { .trampoline = true, .trampolineSize = 256 });  // inventory zoom calls, player skeleton update call, container lid
+	SKSE::Init(a_skse, { .trampoline = true, .trampolineSize = 256 });
 	logs::info("Item Inspection loading");
 
 	Seen::Register();
 	Inspect::InstallHooks();
 	SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
+	SKSE::GetPapyrusInterface()->Register(RegisterPapyrus);
+
 	return true;
 }
