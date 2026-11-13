@@ -1752,6 +1752,32 @@ namespace Inspect
 			return true;
 		}
 
+
+		// Start inspection on an arbitrary form (no world ref or container). Used for fishing catches, scripted rewards, etc.
+		bool BeginFromForm(RE::TESBoundObject* object, std::int32_t count)
+		{
+			const auto player = Player();
+			if (!player || !object || Active() || !PlayerFree(player)) {
+				return false;
+			}
+			SetWeaponKind(object);
+			const auto model = LoadModel(object);
+			if (!model || !MakeItem(model.get(), true, !state.weapon)) {
+				logs::warn("No model for {:08X}, cannot inspect", object->GetFormID());
+				state = {};
+				return false;
+			}
+			state.source = Source::kWorld;  // treat as world pickup for stow/return behavior
+			state.baseID = object->GetFormID();
+			state.count = count;
+			state.name = ItemName(object);
+			logs::info("Inspecting {} ({:08X}, x{}) from scripted source, size {:.1f}, scale {:.2f}",
+				state.name, state.baseID, state.count, state.radius, state.scale);
+			TakeControl();
+			return true;
+		}
+
+
 		// ---- harvesting a plant ----
 
 		std::atomic<bool> harvestPending{ false };  // a harvest was held back, the inspection starts with the next task
@@ -3430,6 +3456,22 @@ namespace Inspect
 			containerPending = false;
 			if (!BeginFromContainer(a_item)) {
 				GiveContainerItem(a_item);  // QuickLoot left it to us: taken the normal way
+			}
+		});
+		return true;
+	}
+
+	bool OfferItem(RE::TESBoundObject* object, std::int32_t count)
+	{
+		if (!object || Active()) {
+			return false;
+		}
+		SKSE::GetTaskInterface()->AddTask([object, count]() {
+			if (!BeginFromForm(object, count)) {
+				// failed to start inspection — give the item the normal way
+				if (auto player = RE::PlayerCharacter::GetSingleton()) {
+					player->AddObjectToContainer(object, nullptr, count, nullptr);
+				}
 			}
 		});
 		return true;
