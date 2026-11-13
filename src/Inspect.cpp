@@ -50,7 +50,8 @@ namespace Inspect
 			kWorld,      // taken from the world: picked up when it goes into the backpack
 			kInventory,  // already ours, taken out of the inventory menu: the menu opens again at the end
 			kContainer,  // QuickLoot's take from a container or body: taken out of it when it goes into the backpack
-			kHarvest     // a plant's ingredient: the plant is harvested when it goes into the backpack
+			kHarvest,    // a plant's ingredient: the plant is harvested when it goes into the backpack
+			kForm        // a scripted reward with no world reference (fishing catch, etc.)
 		};
 
 		// a plant's Activate (TESFlora / TESObjectTREE), called when the harvest really happens
@@ -237,6 +238,7 @@ namespace Inspect
 			bool                          arg3{ false };
 			bool                          playSound{ true };
 			bool                          pickedUp{ false };
+			bool                          formDiscarded{ false };  // a scripted reward was deliberately put back / released
 			float                         awake{ -1.0f };  // stealing: seconds since the world woke up for the theft (-1 = not woken)
 			// for sale (Purchaseable Store-Display-Items): taken for free, bought when it goes into the backpack
 			bool                          forSale{ false };
@@ -870,6 +872,11 @@ namespace Inspect
 
 		void Finish()
 		{
+			// A scripted reward must not disappear if inspection is interrupted before the player chooses.
+			const bool giveForm = state.source == Source::kForm && !state.pickedUp && !state.formDiscarded;
+			const auto formID = state.baseID;
+			const auto formCount = state.count;
+
 			ShowCameraArms(false);
 			if (state.searching || (state.takeIdle && !state.pickedUp)) {
 				// cut short: up from the search / out of the take (once the item is in, the take plays out on its own and
@@ -899,6 +906,13 @@ namespace Inspect
 			const bool container = state.source == Source::kContainer;
 			const auto lid = state.ref;
 			state = {};
+			if (giveForm) {
+				const auto object = RE::TESForm::LookupByID<RE::TESBoundObject>(formID);
+				if (const auto player = Player(); player && object) {
+					player->AddObjectToContainer(object, nullptr, formCount, nullptr);
+					logs::info("Returned interrupted scripted reward {:08X} x{} to inventory", formID, formCount);
+				}
+			}
 			if (reopen) {
 				ShowInventory(true);
 			}
@@ -1767,10 +1781,13 @@ namespace Inspect
 				state = {};
 				return false;
 			}
-			state.source = Source::kWorld;  // treat as world pickup for stow/return behavior
+			state.source = Source::kForm;
 			state.baseID = object->GetFormID();
 			state.count = count;
 			state.name = ItemName(object);
+			state.rotation = NiMatrix3{};  // a scripted item rises directly into the hand; it has no world orientation
+			state.pickedUp = false;
+			state.formDiscarded = false;
 			logs::info("Inspecting {} ({:08X}, x{}) from scripted source, size {:.1f}, scale {:.2f}",
 				state.name, state.baseID, state.count, state.radius, state.scale);
 			TakeControl();
@@ -2336,6 +2353,8 @@ namespace Inspect
 			const bool  world = state.source == Source::kWorld;
 			const bool  container = state.source == Source::kContainer;
 			const bool  harvest = state.source == Source::kHarvest;
+			const bool  form = state.source == Source::kForm;
+			const bool  needsReference = world || container || harvest;
 			const auto  ref = state.ref.get();
 			state.time += a_delta;
 			state.clock += a_delta;
@@ -2348,7 +2367,7 @@ namespace Inspect
 
 			// (an item for sale is picked up by the store's script while it's being bought)
 			const bool beingBought = state.phase == Phase::kBuying || state.bought;
-			if (!player || player->IsDead() || (state.source != Source::kInventory && !state.pickedUp && !beingBought && !ref)) {
+			if (!player || player->IsDead() || (needsReference && !state.pickedUp && !beingBought && !ref)) {
 				logs::info("Inspection ended: {}", player && !player->IsDead() ? "the item is gone" : "the player died");
 				Finish();
 				return;
@@ -2474,7 +2493,15 @@ namespace Inspect
 				state.switchRequested = false;
 				if (state.storeRequested || state.putBackRequested) {
 					// an inventory item has nowhere else to go than the backpack
-					const Phase next = state.storeRequested || state.source == Source::kInventory ? Phase::kStow : Phase::kPutBack;
+					Phase next;
+					if (state.storeRequested || state.source == Source::kInventory) {
+						next = Phase::kStow;
+					} else if (state.source == Source::kForm) {
+						state.formDiscarded = true;  // release the scripted catch instead of putting it at a nonexistent world location
+						next = Phase::kReturn;
+					} else {
+						next = Phase::kPutBack;
+					}
 					if (next == Phase::kStow && state.forSale && !state.bought) {
 						BeginBuying();
 					} else {
@@ -2532,6 +2559,11 @@ namespace Inspect
 					} else if (harvest) {
 						HarvestNow(state.ref, state.harvest);
 						Seen::Add(state.baseID);
+						} else if (form) {
+							if (const auto object = RE::TESForm::LookupByID<RE::TESBoundObject>(state.baseID)) {
+								player->AddObjectToContainer(object, nullptr, state.count, nullptr);
+								}
+							Seen::Add(state.baseID);
 					}
 					// from the player's body, not the 1st person hand: the hand is on its way out of view and the camera
 					// goes back to 3rd person right after, and a sound following the hand jumped with it (broken sound)
@@ -3037,7 +3069,7 @@ namespace Inspect
 				Telekinesis::Place(glow);
 			}
 
-			const bool fromRef = state.source != Source::kInventory;
+			const bool fromRef = state.source == Source::kWorld || state.source == Source::kContainer || state.source == Source::kHarvest;
 			switch (state.phase) {
 			case Phase::kRaise:
 				// from the world the item flies from where it lay (out of a container, from inside it); out of the
