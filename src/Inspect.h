@@ -27,6 +27,11 @@ namespace Inspect
 	// inventory only when it's put in the backpack. Called from QuickLoot's menu, the inspection starts as a task.
 	bool OfferContainerItem(const ContainerItem& a_item);
 
+	// Start an inspection on an arbitrary item form (fishing catch, scripted reward, etc.).
+	// Returns true if the inspection was queued. The item is added to inventory only when stowed,
+	// or immediately if inspection cannot start.
+	bool OfferItem(RE::TESBoundObject* object, std::int32_t count = 1);
+
 	// QuickLoot shows a container: another one than the one searched last means the next take searches anew
 	void ContainerShown(RE::ObjectRefHandle a_container);
 }
